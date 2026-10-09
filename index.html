@@ -22,6 +22,7 @@
     #local-folder-note{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
     #message{font-size:13px;color:var(--muted);margin-bottom:14px}#description{max-width:740px}footer{font-size:12px;color:var(--muted);margin-top:16px}
     dialog{max-width:520px;width:calc(100% - 32px);background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:24px}dialog::backdrop{background:#0009}.dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:24px}#fusion-details{margin:20px 0;grid-template-columns:auto minmax(0,1fr)}#fusion-details dd{overflow-wrap:anywhere}#fusion-progress{font-size:13px}
+    .fusion-tracker{margin:18px 0;padding:14px;border:1px solid var(--line);border-radius:8px;background:#111b23}.fusion-tracker[hidden]{display:none}.fusion-tracker-heading{display:flex;justify-content:space-between;gap:12px;margin-bottom:14px;font-size:13px}.fusion-tracker-heading span{color:var(--muted);white-space:nowrap}.fusion-track{margin:10px 0}.fusion-track[hidden]{display:none}.fusion-track-heading{display:flex;justify-content:space-between;gap:10px;margin-bottom:5px;font-size:12px}.fusion-track-heading span:last-child{color:var(--muted)}.fusion-track progress{display:block;width:100%;height:10px;accent-color:var(--accent)}
     @media(max-width:800px){main{padding:16px}.layout{grid-template-columns:1fr}header{align-items:flex-start}#plot{height:420px}}
   </style>
 </head>
@@ -79,6 +80,21 @@
   <h2 id="fusion-title">Review Fusion import</h2>
   <p id="fusion-import-summary">This will add this model revision to Fusion.</p>
   <dl id="fusion-details"></dl>
+  <section id="fusion-tracker" class="fusion-tracker" aria-label="Fusion import progress" hidden>
+    <div class="fusion-tracker-heading"><strong id="fusion-stage">Ready for approval</strong><span id="fusion-elapsed"></span></div>
+    <div id="fusion-parts-track" class="fusion-track">
+      <div class="fusion-track-heading"><span id="fusion-parts-label">STEP parts</span><span id="fusion-parts-count">0 of 0</span></div>
+      <progress id="fusion-parts-progress" max="1" value="0" aria-labelledby="fusion-parts-label"></progress>
+    </div>
+    <div id="fusion-joints-track" class="fusion-track" hidden>
+      <div class="fusion-track-heading"><span id="fusion-joints-label">Joints</span><span id="fusion-joints-count">0 of 0</span></div>
+      <progress id="fusion-joints-progress" max="1" value="0" aria-labelledby="fusion-joints-label"></progress>
+    </div>
+    <div id="fusion-motion-track" class="fusion-track" hidden>
+      <div class="fusion-track-heading"><span id="fusion-motion-label">Motion checks</span><span id="fusion-motion-count">0 of 0</span></div>
+      <progress id="fusion-motion-progress" max="1" value="0" aria-labelledby="fusion-motion-label"></progress>
+    </div>
+  </section>
   <p id="fusion-progress" role="status" aria-live="polite">Check the model and destination, then approve the import.</p>
   <details id="fusion-error-details" hidden><summary>Import error details</summary><pre id="fusion-error-text" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto"></pre><a id="fusion-error-report" class="button" download>Download error report</a></details>
   <div class="dialog-actions"><button id="fusion-cancel">Cancel</button><button id="fusion-confirm" class="primary">Approve and import</button></div>

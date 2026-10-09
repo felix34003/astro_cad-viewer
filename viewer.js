@@ -16,7 +16,7 @@
     side:{eye:{x:2,y:0,z:0},up:{x:0,y:0,z:1}}
   };
   let camera = views.iso, activeBuild = null, hidden = new Set(), drag = null;
-  let fusionPlan = null, importing = false;
+  let fusionPlan = null, importing = false, stopFusionProgress = null;
   let jointValues = new Map();
   let selectedParts = new Set();
   let localObjectUrls = [];
@@ -83,15 +83,97 @@
       const data = await response.json();
       if (!response.ok) {
         const error = new Error(data.error || 'Fusion request failed.');
-        error.details = data.details; error.reportUrl = data.report_url; throw error;
+        error.details = data.details || data.progress?.error;
+        error.reportUrl = data.report_url || data.progress?.report_url;
+        error.progress = data.progress; error.resultUncertain = data.result_uncertain; throw error;
       }
       return data;
     } catch (error) {
       if (staticViewer && error.name === 'TypeError') {
-        throw new Error('Could not reach the local Fusion helper at 127.0.0.1:8922. Start the helper on this computer and allow the browser local-network prompt.');
+        const networkError = new Error('Could not reach the local Fusion helper at 127.0.0.1:8922. Start the helper on this computer and allow the browser local-network prompt.');
+        networkError.resultUncertain = url.startsWith('/api/fusion/import');
+        throw networkError;
       }
       throw error;
     } finally {clearTimeout(timer);}
+  }
+  function formatDuration(seconds) {
+    const value = Math.max(0,Math.floor(Number(seconds)||0));
+    return value < 60 ? value+'s' : Math.floor(value/60)+'m '+String(value%60).padStart(2,'0')+'s';
+  }
+  function setFusionTrack(trackId, progressId, countId, label, completed, total) {
+    const track = E(trackId), bar = E(progressId);
+    track.hidden = total <= 0;
+    bar.max = Math.max(1,total);
+    bar.value = Math.min(Math.max(0,completed),total);
+    E(countId).textContent = `${Math.min(Math.max(0,completed),total)} of ${total} ${label}`;
+  }
+  function fusionStage(progress) {
+    if (progress.status==='uncertain') return 'Waiting for Fusion response';
+    if (progress.status==='imported_unverified') return 'Import finished; verification incomplete';
+    if (progress.status==='needs_attention') return 'Fusion needs attention';
+    if (progress.status==='complete') return 'Import and verification complete';
+    return ({
+      connecting:'Connecting to Fusion', validating:'Checking approved STEP files',
+      creating_component:'Creating the controller component', importing_parts:'Importing STEP parts into Fusion',
+      creating_joints:'Creating assembly joints', import_complete:'STEP parts and joints imported; verifying structure',
+      verifying_structure:'Verifying bodies, joints, axes, and travel', verifying_motion:'Checking native joint motion',
+      complete:'Import and verification complete'
+    })[progress.phase] || progress.message || 'Fusion is working';
+  }
+  function renderFusionProgress(progress) {
+    const elapsed = formatDuration(progress.elapsed_seconds);
+    const parts = Number.isFinite(progress.total_parts) ? `${progress.completed_parts||0}/${progress.total_parts} STEP parts imported` : '';
+    const joints = Number.isFinite(progress.total_joints) ? `${progress.completed_joints||0}/${progress.total_joints} joints created` : '';
+    const counts = [parts,joints].filter(Boolean).join('; ');
+    const current = progress.current_item ? `${progress.current_item_state==='running'?'Current':'Last completed'}: ${progress.current_item}` : '';
+    const currentTime = progress.current_item_state==='running' && progress.step_elapsed_seconds != null
+      ? ` (${formatDuration(progress.step_elapsed_seconds)} on this step)`
+      : progress.current_item_state==='completed' && progress.last_item_duration_seconds != null
+        ? ` (${formatDuration(progress.last_item_duration_seconds)} for this step)` : '';
+    if (progress.status==='uncertain') return `Fusion has not returned a final result. ${current || progress.message}${currentTime}. ${counts}. ${elapsed} elapsed. A long step alone does not confirm failure; inspect before retrying.`;
+    if (progress.status==='imported_unverified') return `Fusion reports that import finished, but verification did not. ${current || progress.message}. ${counts}. ${elapsed} elapsed. Inspect before retrying.`;
+    if (progress.phase==='import_complete') return `Fusion finished importing the parts and creating joints; verification has not returned yet. ${counts}. ${elapsed} elapsed.`;
+    if (progress.status==='needs_attention') return `Fusion needs attention: ${progress.message}. ${current}. ${counts}. ${elapsed} elapsed.`;
+    if (progress.phase==='verifying_motion' && Number.isFinite(progress.motion_total_joints)) {
+      const motion = `${progress.motion_completed_joints||0}/${progress.motion_total_joints} motion checks complete`;
+      return `${progress.message}. ${counts}; ${motion}. ${elapsed} elapsed.${current ? ' '+current+currentTime+'.' : ''}`;
+    }
+    if (progress.status==='complete') return `Import and verification complete. ${counts}. Total time ${elapsed}.`;
+    return `${progress.message || 'Fusion is working'}. ${counts}. ${elapsed} elapsed.${current ? ' '+current+currentTime+'.' : ''}`;
+  }
+  function updateFusionProgressUi(progress) {
+    const assembly = fusionPlan?.assembly;
+    const expectedParts = assembly ? fusionPlan.part_exports.length : 1;
+    const expectedJoints = assembly ? assembly.rigid.length+assembly.joints.length : 0;
+    const expectedMotion = assembly ? assembly.joints.length : 0;
+    setFusionTrack('fusion-parts-track','fusion-parts-progress','fusion-parts-count','STEP parts',
+      progress.completed_parts ?? 0,progress.total_parts ?? expectedParts);
+    setFusionTrack('fusion-joints-track','fusion-joints-progress','fusion-joints-count','joints',
+      progress.completed_joints ?? 0,progress.total_joints ?? expectedJoints);
+    setFusionTrack('fusion-motion-track','fusion-motion-progress','fusion-motion-count','motion checks',
+      progress.motion_completed_joints ?? 0,progress.motion_total_joints ?? expectedMotion);
+    E('fusion-stage').textContent = fusionStage(progress);
+    E('fusion-elapsed').textContent = `${formatDuration(progress.elapsed_seconds)} elapsed`;
+    E('fusion-tracker').hidden = false;
+    E('fusion-progress').textContent = renderFusionProgress(progress);
+  }
+  function watchFusionProgress(plan) {
+    let active = true;
+    const requestBudget = Number(plan.import_mcp_timeout_seconds) || 180;
+    const stopAt = Date.now()+Math.max(600000,(requestBudget+330)*1000);
+    const query = new URLSearchParams({build_id:plan.build_id,plan_id:plan.plan_id});
+    const task = (async () => {
+      while (active && Date.now()<stopAt) {
+        try {
+          const progress = await api('/api/fusion/progress?'+query.toString(),{},8000);
+          if (progress.status!=='not_started') updateFusionProgressUi(progress);
+          if (['complete','needs_attention','imported_unverified'].includes(progress.status)) break;
+        } catch {}
+        if (active) await new Promise(resolve => setTimeout(resolve,1200));
+      }
+    })();
+    return async () => {active=false; await task;};
   }
   async function fetchLocalAsset(url, timeout=30000, asJson=false) {
     const controller = new AbortController();
@@ -404,6 +486,10 @@
       row(E('fusion-details'),'Fusion design',fusionPlan.target.document_name);
       row(E('fusion-details'),'Parent component',fusionPlan.target.component_name);
       row(E('fusion-details'),'New component',fusionPlan.new_component_name);
+      const importItemCount = assembly ? fusionPlan.part_exports.length : 1;
+      row(E('fusion-details'),'Import progress',`${importItemCount} STEP item${importItemCount===1?'':'s'} reported individually`);
+      row(E('fusion-details'),'Request safety limit',formatDuration(fusionPlan.import_mcp_timeout_seconds||180)+' per request (not an ETA)');
+      E('fusion-tracker').hidden = true;
       E('fusion-progress').textContent = 'Check the model and destination, then approve the import.';
       E('fusion-error-details').hidden = true;
       E('fusion-confirm').disabled = E('fusion-cancel').disabled = false;
@@ -417,6 +503,7 @@
   };
   E('fusion-review').addEventListener('cancel', event => {if (importing) event.preventDefault();});
   E('fusion-review').addEventListener('close', () => {
+    if (stopFusionProgress) {const stop=stopFusionProgress; stopFusionProgress=null; void stop();}
     fusionPlan = null;
     E('fusion').disabled = E('refresh').disabled = false;
   });
@@ -425,18 +512,31 @@
     if (!fusionPlan || importing) return;
     importing = true;
     E('fusion-confirm').disabled = E('fusion-cancel').disabled = true;
+    updateFusionProgressUi({phase:'connecting',status:'running',completed_parts:0,total_parts:fusionPlan.assembly ? fusionPlan.part_exports.length : 1,
+      completed_joints:0,total_joints:fusionPlan.assembly ? fusionPlan.assembly.rigid.length+fusionPlan.assembly.joints.length : 0,
+      motion_completed_joints:0,motion_total_joints:fusionPlan.assembly?.joints.length||0,elapsed_seconds:0,
+      message:'Connecting to Fusion and checking the approved plan'});
     E('fusion-progress').textContent = 'Importing the approved revision into Fusion…';
+    stopFusionProgress = watchFusionProgress(fusionPlan);
+    let keepProgressWatch = false;
     try {
+      const requestBudget = Number(fusionPlan.import_mcp_timeout_seconds) || 180;
+      const browserWait = Math.max(610000,(requestBudget+330)*1000);
       const receipt = await api('/api/fusion/import', {
         method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({build_id:fusionPlan.build_id,plan_id:fusionPlan.plan_id,approved:true})
-      },190000);
+      },browserWait);
       E('message').textContent = 'Imported into ' + receipt.import.document_name + ' as ' + receipt.verification.component_name + '. Verified ' + receipt.verification.body_count + ' body/bodies' + (receipt.verification.joints?.length ? ' and '+receipt.verification.joints.length+' native joints.' : '.');
       E('status').textContent = 'Imported into Fusion';
       E('fusion-review').close();
     } catch(error) {
-      E('fusion-progress').textContent = error.name === 'AbortError' ? 'Import result is uncertain. Inspect Fusion before retrying.' : error.message;
-      E('status').textContent = 'Import failed / unverified';
+      keepProgressWatch = error.name==='AbortError' || error.resultUncertain===true
+        || ['running','uncertain','imported_unverified'].includes(error.progress?.status);
+      if (error.progress) updateFusionProgressUi(error.progress);
+      else E('fusion-progress').textContent = error.name === 'AbortError' ? 'Import result is uncertain. Inspect Fusion before retrying.' : error.message;
+      E('status').textContent = error.progress?.status==='running' ? 'Fusion import still running'
+        : ['uncertain','imported_unverified'].includes(error.progress?.status) || error.resultUncertain ? 'Fusion import status uncertain'
+          : error.progress?.status==='needs_attention' ? 'Fusion import needs attention' : 'Import failed / unverified';
       E('message').textContent = E('fusion-progress').textContent;
       E('fusion-error-details').hidden = false;
       E('fusion-error-details').open = true;
@@ -444,7 +544,10 @@
       E('fusion-error-report').hidden = !error.reportUrl;
       if(error.reportUrl) E('fusion-error-report').href=error.reportUrl;
       E('fusion-cancel').disabled = false;
-    } finally {importing = false;}
+    } finally {
+      if (stopFusionProgress && !keepProgressWatch) {const stop=stopFusionProgress; stopFusionProgress=null; await stop();}
+      importing = false;
+    }
   };
   document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => {camera = views[button.dataset.view]; renderer.fit(); draw();});
   E('fit').onclick = () => {renderer.fit(); draw();};
