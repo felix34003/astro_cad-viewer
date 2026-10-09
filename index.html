@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CAD Preview</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root{color-scheme:dark;--bg:#10171e;--panel:#18232d;--line:#30414e;--text:#e4edf3;--muted:#a6b9c7;--accent:#8bd4bb}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px system-ui,sans-serif}
+    main{max-width:1280px;margin:0 auto;padding:26px}header{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:24px}
+    h1{margin:5px 0;font-size:26px;font-weight:600}h2{font-size:15px;margin:0 0 14px}.eyebrow{color:var(--accent);font-size:12px;letter-spacing:.12em;text-transform:uppercase}
+    p{line-height:1.6;color:var(--muted);margin:6px 0}.layout{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:20px}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}.toolbar{display:flex;gap:6px;flex-wrap:wrap;padding:13px;border-bottom:1px solid var(--line)}
+    button,.button{font:inherit;border:1px solid #4d6373;background:#223440;color:var(--text);border-radius:6px;padding:8px 12px;cursor:pointer;text-decoration:none;display:inline-block}
+    button:hover,.button:hover{background:#304a59}button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.primary{background:var(--accent);color:#112b23;border-color:var(--accent)}
+    button:disabled,.disabled{opacity:.45;pointer-events:none}.toolbar .spacer{flex:1}#plot{height:530px;touch-action:none}#plot canvas{width:100%;height:100%;display:block}
+    .hint{font-size:12px;padding:10px 14px;border-top:1px solid var(--line)}aside{padding:20px}.badge{display:inline-block;background:#24483d;color:#bcf1db;padding:5px 9px;border-radius:20px;font-size:12px;margin-bottom:20px}
+    .section{border-top:1px solid var(--line);padding-top:20px;margin-top:20px}dl{display:grid;grid-template-columns:1fr auto;gap:10px;margin:0;font-size:13px}dt{color:var(--muted)}dd{margin:0;text-align:right}
+    .part{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px}.exports{display:flex;flex-direction:column;gap:9px}.exports .button{text-align:center}.revision{font:11px ui-monospace,monospace;overflow-wrap:anywhere;color:var(--muted);margin-top:15px}
+    .motion-control{display:flex;align-items:center;gap:8px;margin:9px 0}.motion-control label{flex:1;min-width:0}.motion-control input[type=range]{display:block;width:100%;margin:5px 0 0}.motion-control button{padding:4px 8px;font-size:12px}
+    #local-folder-note{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+    #message{font-size:13px;color:var(--muted);margin-bottom:14px}#description{max-width:740px}footer{font-size:12px;color:var(--muted);margin-top:16px}
+    dialog{max-width:520px;width:calc(100% - 32px);background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:24px}dialog::backdrop{background:#0009}.dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:24px}#fusion-details{margin:20px 0;grid-template-columns:auto minmax(0,1fr)}#fusion-details dd{overflow-wrap:anywhere}#fusion-progress{font-size:13px}
+    @media(max-width:800px){main{padding:16px}.layout{grid-template-columns:1fr}header{align-items:flex-start}#plot{height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div><div class="eyebrow">CAD Preview</div><h1 id="name">Your next model</h1><p id="description">Describe a part in chat to generate a preview.</p></div>
+    <button id="refresh">Refresh model</button>
+  </header>
+  <input id="local-folder-input" type="file" webkitdirectory multiple hidden aria-label="Choose the local outputs folder">
+  <div id="local-folder-note" hidden>
+    <span id="local-folder-status">Default: <code>outputs/</code> from the local helper. You can choose another local outputs folder.</span>
+    <button id="choose-local-folder" type="button">Choose outputs folder</button>
+  </div>
+  <div id="message" role="status" aria-live="polite">Loading the latest model…</div>
+  <div class="layout">
+    <section class="panel" aria-label="3D model preview">
+      <div class="toolbar">
+        <button data-view="iso">3D</button><button data-view="top">Top</button><button data-view="front">Front</button><button data-view="side">Side</button>
+        <span class="spacer"></span><button id="fit">Fit</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button>
+      </div>
+      <div id="plot"></div>
+      <div class="toolbar" aria-label="Reference grid controls">
+        <label><input id="grid-xy" type="checkbox" checked> XY grid</label>
+        <label><input id="grid-xz" type="checkbox"> XZ grid</label>
+        <label><input id="grid-yz" type="checkbox"> YZ grid</label>
+        <label><input id="grid-axes" type="checkbox" checked> XYZ axes</label>
+        <label><input id="grid-dimensions" type="checkbox" checked> Dimensions</label>
+        <span id="grid-scale" class="hint"></span>
+      </div>
+      <p class="hint">Click to select · Shift + click to add/remove · Drag to orbit · Shift + drag to pan · Scroll to zoom</p>
+    </section>
+    <aside class="panel">
+      <div id="status" class="badge">Waiting for a model</div>
+      <h2 id="selection-title">Select a part</h2>
+      <label class="part"><input id="show-all-details" type="checkbox"> Show full model details</label>
+      <p id="selection-hint" class="hint">Selected parts are gold. Shift + click selects multiple parts. Sidebar dimensions measure each closed part; canvas dimensions show the selection's current XYZ bounding box.</p>
+      <h2>Dimensions</h2><dl id="dimensions"></dl>
+      <div class="section"><h2>Parameters</h2><dl id="parameters"></dl></div>
+      <div class="section" id="motion-section" hidden><h2>Movement experiment</h2><div id="motion"></div><p id="motion-note" class="hint"></p></div>
+      <div class="section"><h2>Parts</h2><div id="parts"></div></div>
+      <div class="section exports">
+        <button id="fusion" class="primary" disabled>Import into Fusion</button>
+        <a id="step" class="button disabled" aria-disabled="true" download>Download STEP</a>
+        <a id="stl" class="button disabled" aria-disabled="true" download>Download STL</a>
+        <button id="copy-path" disabled>Copy STEP path</button>
+        <p class="hint">Import into Fusion shows the destination and asks for your approval.</p>
+      </div>
+      <div id="revision" class="revision"></div>
+    </aside>
+  </div>
+  <footer>Preview and STEP export come from the same CAD solids. Geometry checks cover solid validity and STEP readability.</footer>
+</main>
+<dialog id="fusion-review" aria-labelledby="fusion-title">
+  <h2 id="fusion-title">Review Fusion import</h2>
+  <p id="fusion-import-summary">This will add this model revision to Fusion.</p>
+  <dl id="fusion-details"></dl>
+  <p id="fusion-progress" role="status" aria-live="polite">Check the model and destination, then approve the import.</p>
+  <details id="fusion-error-details" hidden><summary>Import error details</summary><pre id="fusion-error-text" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto"></pre><a id="fusion-error-report" class="button" download>Download error report</a></details>
+  <div class="dialog-actions"><button id="fusion-cancel">Cancel</button><button id="fusion-confirm" class="primary">Approve and import</button></div>
+</dialog>
+<script src="software_view.js"></script>
+<script src="viewer.js"></script>
+</body>
+</html>
