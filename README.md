@@ -10,3 +10,7 @@ The viewer can read an `outputs/` folder selected by the visitor or connect to a
 compatible helper running on that same visitor's computer. Model files remain
 local to that computer. Fusion import also requires that visitor's own Fusion
 MCP connection and an explicit approval in the viewer.
+
+With a compatible helper, the Fusion import dialog shows the current stage,
+completed STEP parts and joints, native motion checks, and elapsed time for the
+current step. A slow step alone is not treated as a failed import.
