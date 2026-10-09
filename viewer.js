@@ -479,12 +479,12 @@
   renderer.canvas.onpointercancel = () => {drag = null;};
   if (staticViewer) {
     E('refresh').textContent = 'Refresh local model';
-    E('refresh').disabled = true;
+    E('refresh').disabled = false;
     E('local-folder-note').hidden = false;
     E('copy-path').hidden = true;
     E('status').textContent = 'Waiting for local files';
     E('local-folder-status').textContent = 'Default folder: outputs/ from the local helper. You can choose another local outputs folder.';
-    E('message').textContent = 'Loading the default local outputs folder from this computer…';
+    E('message').textContent = 'Click Refresh local model to use this computer’s default outputs/ folder, or choose a local outputs folder below.';
     (async () => {
       try {
         const directory = await savedOutputDirectory();
@@ -501,10 +501,8 @@
           localOutputDirectory = null;
           E('local-folder-status').textContent = 'A saved local outputs folder needs permission again. The page will try the default outputs/ folder first.';
         }
-        await refreshStaticViewer();
       } catch (error) {
-        E('message').textContent = 'Could not restore the saved folder: ' + error.message;
-        await refreshStaticViewer();
+        E('message').textContent = 'Could not restore the saved folder: ' + error.message + ' Choose a local folder or click Refresh local model.';
       }
     })();
   } else {
